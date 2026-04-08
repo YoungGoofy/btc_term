@@ -1,0 +1,214 @@
+/* ─── Reset & Base ─────────────────────────── */
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --bg-primary: #131722;
+  --bg-panel: #1E222D;
+  --border: #2B2B43;
+  --text: #D1D4DC;
+  --text-dim: #787B86;
+  --accent-gold: #F0B90B;
+  --green: #26A69A;
+  --red: #EF5350;
+}
+
+html, body, #root {
+  height: 100%;
+  background: var(--bg-primary);
+  color: var(--text);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  overflow: hidden;
+}
+
+/* ─── App Layout ───────────────────────────── */
+.app {
+  display: grid;
+  grid-template-rows: 48px 2fr 1fr 1fr;
+  height: 100vh;
+  gap: 1px;
+  background: var(--border);
+}
+
+/* ─── Header ───────────────────────────────── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border);
+  z-index: 10;
+}
+
+.header-left, .header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.symbol {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.5px;
+}
+
+.interval-select {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--accent-gold);
+  font-weight: 600;
+  font-size: 13px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23F0B90B'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 24px;
+}
+.interval-select:hover {
+  background-color: #2A2E39;
+  border-color: var(--accent-gold);
+}
+.interval-select option {
+  background: var(--bg-panel);
+  color: var(--text);
+}
+
+.label {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+/* ─── ATR Badge ────────────────────────────── */
+.atr-badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  transition: all 0.3s ease;
+}
+.atr-quiet {
+  background: rgba(120, 123, 134, 0.15);
+  border-color: #787B86;
+  color: #787B86;
+}
+.atr-moderate {
+  background: rgba(33, 150, 243, 0.15);
+  border-color: #2196F3;
+  color: #64B5F6;
+}
+.atr-golden {
+  background: rgba(240, 185, 11, 0.2);
+  border-color: var(--accent-gold);
+  color: var(--accent-gold);
+  box-shadow: 0 0 8px rgba(240, 185, 11, 0.25);
+}
+.atr-high {
+  background: rgba(239, 83, 80, 0.15);
+  border-color: #EF5350;
+  color: #EF5350;
+}
+.atr-extreme {
+  background: rgba(239, 83, 80, 0.3);
+  border-color: #FF1744;
+  color: #FF1744;
+  animation: pulse 1s infinite;
+}
+
+/* ─── Clocks ───────────────────────────────── */
+.clocks {
+  display: flex;
+  gap: 10px;
+}
+.clock-item {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.current-price {
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  transition: color 0.2s;
+}
+.price-up { color: var(--green); }
+.price-down { color: var(--red); }
+
+.tick-count {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.error-badge {
+  color: var(--red);
+  font-size: 12px;
+  font-weight: 500;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ─── Panels ───────────────────────────────── */
+.panel {
+  position: relative;
+  background: var(--bg-primary);
+  overflow: hidden;
+}
+
+.panel-label {
+  position: absolute;
+  top: 8px;
+  left: 12px;
+  font-size: 11px;
+  color: var(--text-dim);
+  z-index: 5;
+  pointer-events: none;
+  letter-spacing: 0.3px;
+}
+
+/* ─── Loading ──────────────────────────────── */
+.loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(19, 23, 34, 0.92);
+  z-index: 20;
+  color: var(--accent-gold);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent-gold);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

@@ -13,19 +13,20 @@ import (
 
 // LayoutData contains all data needed to render the full UI.
 type LayoutData struct {
-	Width       int
-	Height      int
-	HACandles   []binance.Candle
-	VWAPValues  []float64
-	EMA9Values  []float64
-	EMA21Values []float64
-	MACDResult  indicator.MACDResult
-	RSIValues   []float64
-	PivotHighs  []float64
-	PivotLows   []float64
-	Interval    string
-	ErrMsg      string
-	TickCount   int
+	Width        int
+	Height       int
+	HACandles    []binance.Candle
+	VWAPValues   []float64
+	EMA9Values   []float64
+	EMA21Values  []float64
+	MACDResult   indicator.MACDResult
+	RSIValues    []float64
+	PivotHighs   []float64
+	PivotLows    []float64
+	Interval     string
+	ErrMsg       string
+	TickCount    int
+	CurrentPrice float64
 }
 
 // ──────────────────────────────────────────────
@@ -81,18 +82,22 @@ func RenderLayout(d LayoutData) string {
 		return "Terminal too small"
 	}
 
-	// Available height minus header (1) and some breathing room.
-	availH := d.Height - 2
-	panelBorderH := 2 // top + bottom border lines
+	// Available height for chart drawing areas only.
+	// Budget: 1 (header) + 3 panels × (2 border + 1 title) = 10 lines of chrome.
+	chromeH := 1 + 3*3 // header + 3×(border+title)
+	usable := d.Height - chromeH
+	if usable < 6 {
+		usable = 6
+	}
 
-	// Panel inner heights.
-	p1H := (availH*50/100) - panelBorderH
-	p2H := (availH*25/100) - panelBorderH
-	p3H := availH - p1H - p2H - 3*panelBorderH
+	// Chart drawing heights (no title/border — those are added by panelStyle).
+	p1H := usable * 50 / 100
+	p2H := usable * 25 / 100
+	p3H := usable - p1H - p2H
 
-	p1H = maxInt(p1H, 4)
-	p2H = maxInt(p2H, 3)
-	p3H = maxInt(p3H, 3)
+	p1H = maxInt(p1H, 3)
+	p2H = maxInt(p2H, 2)
+	p3H = maxInt(p3H, 2)
 
 	innerW := d.Width - 4 // border chrome
 	innerW = maxInt(innerW, 20)
@@ -105,11 +110,25 @@ func RenderLayout(d LayoutData) string {
 	panel2 := renderPanel2(d, chartW, p2H, axisW)
 	panel3 := renderPanel3(d, chartW, p3H)
 
-	// Header.
+	// Header with live price.
+	priceStr := ""
+	if d.CurrentPrice > 0 {
+		pCol := lipgloss.Color("#26A69A")
+		if len(d.HACandles) > 0 {
+			last := d.HACandles[len(d.HACandles)-1]
+			if last.Close < last.Open {
+				pCol = lipgloss.Color("#EF5350")
+			}
+		}
+		priceStr = lipgloss.NewStyle().Foreground(pCol).Bold(true).
+			Render(fmt.Sprintf("  %.2f", d.CurrentPrice))
+	}
+
 	header := headerStyle.Render(" ₿ BTCUSDT ") +
 		intervalBadge.Render(d.Interval) +
-		headerStyle.Render(" · Heikin Ashi ") +
-		lipgloss.NewStyle().Foreground(textDim).Render(fmt.Sprintf(" ticks:%d", d.TickCount))
+		headerStyle.Render(" · Heikin Ashi") +
+		priceStr +
+		lipgloss.NewStyle().Foreground(textDim).Render(fmt.Sprintf("  ticks:%d", d.TickCount))
 	if d.ErrMsg != "" {
 		header += "  " + errStyle.Render("⚠ "+d.ErrMsg)
 	}
@@ -153,18 +172,19 @@ func renderPanel1(d LayoutData, chartW, chartH, axisW int) string {
 	// Legends.
 	title := panelTitleStyle.Render("Price") + "  " + legendVWAP.Render("━ VWAP")
 
-	// Current price label.
+	// Current price label (raw exchange price, not Heikin Ashi).
 	lastPrice := ""
-	if len(visible) > 0 {
-		last := visible[len(visible)-1]
+	if d.CurrentPrice > 0 && len(visible) > 0 {
+		lastHA := visible[len(visible)-1]
 		priceColor := lipgloss.Color("#26A69A")
-		if last.Close < last.Open {
+		// Color from HA direction, value from real exchange price.
+		if lastHA.Close < lastHA.Open {
 			priceColor = lipgloss.Color("#EF5350")
 		}
 		lastPrice = lipgloss.NewStyle().
 			Foreground(priceColor).
 			Bold(true).
-			Render(fmt.Sprintf("  %.2f", last.Close))
+			Render(fmt.Sprintf("  %.2f", d.CurrentPrice))
 	}
 
 	yAxis := renderYAxis(yMin, yMax, chartH, axisW)

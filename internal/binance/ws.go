@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/gorilla/websocket"
 )
 
@@ -35,7 +36,7 @@ type WSClient struct {
 // NewWSClient connects to the Binance kline stream and starts a reader
 // goroutine that writes TickMsg values to the provided outCh.
 // The caller owns the channel — multiple WSClients can write to it sequentially.
-func NewWSClient(symbol, interval string, outCh chan<- TickMsg) (*WSClient, error) {
+func NewWSClient(symbol, interval string, outCh chan<- tea.Msg) (*WSClient, error) {
 	stream := fmt.Sprintf("%s/%s@kline_%s",
 		wsBaseURL, strings.ToLower(symbol), interval)
 
@@ -70,16 +71,18 @@ func NewWSClient(symbol, interval string, outCh chan<- TickMsg) (*WSClient, erro
 // readLoop continuously reads from the WebSocket and pushes parsed ticks
 // to the external output channel. Exits when the connection closes or
 // when Close() is called.
-func (ws *WSClient) readLoop(outCh chan<- TickMsg) {
+func (ws *WSClient) readLoop(outCh chan<- tea.Msg) {
 	for {
 		_ = ws.conn.SetReadDeadline(time.Now().Add(90 * time.Second))
 
 		_, message, err := ws.conn.ReadMessage()
 		if err != nil {
-			// Intentional shutdown — exit silently.
 			select {
 			case <-ws.done:
+				// Intentional shutdown — exit silently.
 			default:
+				// Connection error — notify UI for reconnect.
+				outCh <- WSErrorMsg{Err: err}
 			}
 			return
 		}
@@ -103,9 +106,6 @@ func (ws *WSClient) readLoop(outCh chan<- TickMsg) {
 		case outCh <- tick:
 		case <-ws.done:
 			return
-		default:
-			// Channel full — skip this tick. The next one will carry
-			// the latest price anyway (Binance sends ~every 250ms on 1m).
 		}
 	}
 }

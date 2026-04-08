@@ -53,7 +53,7 @@ type Model struct {
 
 	// WebSocket.
 	ws     *binance.WSClient
-	tickCh chan binance.TickMsg // PERSISTENT channel — lives for the entire model lifetime
+	tickCh chan tea.Msg // PERSISTENT channel — lives for the entire model lifetime
 
 	// UI state.
 	loading   bool
@@ -68,7 +68,7 @@ func New() Model {
 	return Model{
 		interval: "1m",
 		loading:  true,
-		tickCh:   make(chan binance.TickMsg, 128), // shared persistent channel
+		tickCh:   make(chan tea.Msg, 128), // shared persistent channel
 		vwap:     indicator.NewVWAP(),
 		ema9:     indicator.NewEMA(9),
 		ema21:    indicator.NewEMA(21),
@@ -86,16 +86,16 @@ func (m Model) Init() tea.Cmd {
 	)
 }
 
-// waitForTick is a standalone function that reads one tick from the channel
+// waitForTick is a standalone function that reads one message from the channel
 // and returns it as a tea.Msg. The channel is persistent — it's never closed
 // during normal operation, only when the program exits.
-func waitForTick(ch chan binance.TickMsg) tea.Cmd {
+func waitForTick(ch chan tea.Msg) tea.Cmd {
 	return func() tea.Msg {
-		tick, ok := <-ch
+		msg, ok := <-ch
 		if !ok {
 			return binance.WSErrorMsg{Err: fmt.Errorf("tick channel closed")}
 		}
-		return tick
+		return msg
 	}
 }
 
@@ -144,10 +144,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.ws.Close()
 			m.ws = nil
 		}
-		// Reconnect after a short delay. waitForTick is still running via
-		// the persistent channel, so when the new WSClient starts writing,
-		// ticks will flow again.
-		return m, reconnectAfter(symbol, m.interval, 2*time.Second)
+		// CRITICAL: must re-issue waitForTick alongside reconnect,
+		// otherwise the tick listening loop dies permanently.
+		return m, tea.Batch(
+			reconnectAfter(symbol, m.interval, 2*time.Second),
+			waitForTick(m.tickCh),
+		)
 
 	case wsReconnectMsg:
 		ws, err := binance.NewWSClient(msg.symbol, msg.interval, m.tickCh)
@@ -187,20 +189,26 @@ func (m Model) View() string {
 }
 
 func (m Model) renderCharts() string {
+	currentPrice := 0.0
+	if len(m.rawCandles) > 0 {
+		currentPrice = m.rawCandles[len(m.rawCandles)-1].Close
+	}
+
 	return ui.RenderLayout(ui.LayoutData{
-		Width:       m.width,
-		Height:      m.height,
-		HACandles:   m.haCandles,
-		VWAPValues:  m.vwapValues,
-		EMA9Values:  m.ema9Values,
-		EMA21Values: m.ema21Values,
-		MACDResult:  m.macdResult,
-		RSIValues:   m.rsiValues,
-		PivotHighs:  m.pivots.Highs,
-		PivotLows:   m.pivots.Lows,
-		Interval:    m.interval,
-		ErrMsg:      m.errMsg,
-		TickCount:   m.tickCount,
+		Width:        m.width,
+		Height:       m.height,
+		HACandles:    m.haCandles,
+		VWAPValues:   m.vwapValues,
+		EMA9Values:   m.ema9Values,
+		EMA21Values:  m.ema21Values,
+		MACDResult:   m.macdResult,
+		RSIValues:    m.rsiValues,
+		PivotHighs:   m.pivots.Highs,
+		PivotLows:    m.pivots.Lows,
+		Interval:     m.interval,
+		ErrMsg:       m.errMsg,
+		TickCount:    m.tickCount,
+		CurrentPrice: currentPrice,
 	})
 }
 
