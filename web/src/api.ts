@@ -1,7 +1,7 @@
 import type { BinanceKlineRaw, Candle, BinanceWSMessage } from './types';
 
-const REST_BASE = 'https://fapi.binance.com/fapi/v1';
-const WS_BASE = 'wss://fstream.binance.com/ws';
+const REST_BASE = '/binance-fapi/fapi/v1';
+const WS_BASE = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/binance-ws/ws`;
 
 // ─── REST ─────────────────────────────────────
 
@@ -30,30 +30,64 @@ function parseRestKline(k: BinanceKlineRaw): Candle {
 
 // ─── WebSocket ────────────────────────────────
 
+export interface BinanceWsInstance {
+  close: () => void;
+}
+
 export function connectWS(
   symbol: string,
   interval: string,
   onTick: (candle: Candle, isClosed: boolean) => void,
-  onError?: (err: Event) => void
-): WebSocket {
-  const ws = new WebSocket(`${WS_BASE}/${symbol.toLowerCase()}@kline_${interval}`);
+  onError?: (err: Event | string) => void
+): BinanceWsInstance {
+  let ws: WebSocket | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let alive = true;
 
-  ws.onmessage = (event) => {
-    const msg: BinanceWSMessage = JSON.parse(event.data);
-    if (msg.e !== 'kline') return;
-    const k = msg.k;
-    const candle: Candle = {
-      time: Math.floor(k.t / 1000),
-      open: parseFloat(k.o),
-      high: parseFloat(k.h),
-      low: parseFloat(k.l),
-      close: parseFloat(k.c),
-      volume: parseFloat(k.v),
+  const connect = () => {
+    if (!alive) return;
+
+    ws = new WebSocket(`${WS_BASE}/${symbol.toLowerCase()}@kline_${interval}`);
+
+    ws.onmessage = (event) => {
+      try {
+        const msg: BinanceWSMessage = JSON.parse(event.data);
+        if (msg.e !== 'kline') return;
+        const k = msg.k;
+        const candle: Candle = {
+          time: Math.floor(k.t / 1000),
+          open: parseFloat(k.o),
+          high: parseFloat(k.h),
+          low: parseFloat(k.l),
+          close: parseFloat(k.c),
+          volume: parseFloat(k.v),
+        };
+        onTick(candle, k.x);
+      } catch { /* ignore malformed */ }
     };
-    onTick(candle, k.x);
+
+    ws.onerror = (e) => onError?.(e);
+
+    ws.onclose = () => {
+      // If it disconnected and we're still supposed to be alive, reconnect
+      if (alive) {
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        reconnectTimer = setTimeout(() => connect(), 3000);
+      }
+    };
   };
 
-  ws.onerror = (e) => onError?.(e);
+  connect();
 
-  return ws;
+  return {
+    close: () => {
+      alive = false;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (ws) {
+        ws.onclose = null;
+        ws.onerror = null;
+        ws.close();
+      }
+    }
+  };
 }

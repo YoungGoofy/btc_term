@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { fetchKlines, connectWS } from './api';
+import type { BinanceWsInstance } from './api';
 import { computeAll } from './indicators';
 import type { ComputedData } from './indicators';
 import {
@@ -15,6 +16,8 @@ import type {
   MacdChartBundle,
 } from './chartSetup';
 import type { Candle } from './types';
+import { initPolymarket, EMPTY_PM } from './polymarket';
+import type { PolymarketData } from './polymarket';
 
 const SYMBOL = 'BTCUSDT';
 const MAX_CANDLES = 500;
@@ -50,7 +53,7 @@ function formatTZ(date: Date, tz: string): string {
 }
 
 export default function App() {
-  const [interval, setInterval] = useState('1m');
+  const [interval, setInterval] = useState('15m');
   const [state, setState] = useState<AppState>({
     loading: true,
     error: '',
@@ -59,6 +62,7 @@ export default function App() {
     atrValue: 0,
   });
   const [clocks, setClocks] = useState({ msk: '', gmt: '', et: '' });
+  const [pmData, setPmData] = useState<PolymarketData>(EMPTY_PM);
 
   // DOM refs for chart containers.
   const priceRef = useRef<HTMLDivElement>(null);
@@ -70,7 +74,7 @@ export default function App() {
   const emaChartRef = useRef<EmaChartBundle | null>(null);
   const macdChartRef = useRef<MacdChartBundle | null>(null);
   const candlesRef = useRef<Candle[]>([]);
-  const wsRef = useRef<WebSocket | null>(null);
+  const wsRef = useRef<BinanceWsInstance | null>(null);
 
   // ─── Clocks tick every second ───────────────
 
@@ -86,6 +90,13 @@ export default function App() {
     tick();
     const id = window.setInterval(tick, 1000);
     return () => window.clearInterval(id);
+  }, []);
+
+  // ─── Polymarket init ────────────────────────
+
+  useEffect(() => {
+    const cleanup = initPolymarket((data) => setPmData(data));
+    return () => cleanup();
   }, []);
 
   // Feed computed data to all chart series.
@@ -208,6 +219,7 @@ export default function App() {
       updateLast(computed);
       setState((s) => ({
         ...s,
+        error: '', // Clear any previous reconnect errors
         currentPrice: tick.close,
         tickCount: s.tickCount + 1,
         atrValue: computed.atrValue,
@@ -278,25 +290,89 @@ export default function App() {
         </div>
       </header>
 
-      {/* Chart panels */}
-      <div className="panel panel-price" ref={priceRef}>
-        {state.loading && <div className="loading-overlay"><div className="spinner" />Loading…</div>}
-        <div className="panel-label">Price · <span style={{ color: '#FF9800' }}>VWAP</span> · <span style={{ color: '#E040FB' }}>RSI</span></div>
-      </div>
-
-      <div className="panel panel-ema" ref={emaRef}>
-        <div className="panel-label">
-          <span style={{ color: '#2196F3' }}>EMA 9</span> ·{' '}
-          <span style={{ color: '#9C27B0' }}>EMA 21</span> ·{' '}
-          <span style={{ color: '#F48FB1' }}>Pivots HL</span>
+      {/* Main content: charts + sidebar */}
+      <div className="main-content">
+        {/* Chart column */}
+        <div className="charts-column">
+          <div className="panel panel-price" ref={priceRef}>
+            {state.loading && <div className="loading-overlay"><div className="spinner" />Loading…</div>}
+            <div className="panel-label">Price · <span style={{ color: '#FF9800' }}>VWAP</span> · <span style={{ color: '#E040FB' }}>RSI</span></div>
+          </div>
+          <div className="panel panel-ema" ref={emaRef}>
+            <div className="panel-label">
+              <span style={{ color: '#2196F3' }}>EMA 9</span> ·{' '}
+              <span style={{ color: '#9C27B0' }}>EMA 21</span> ·{' '}
+              <span style={{ color: '#F48FB1' }}>Pivots HL</span>
+            </div>
+          </div>
+          <div className="panel panel-macd" ref={macdRef}>
+            <div className="panel-label">
+              <span style={{ color: '#2196F3' }}>MACD</span> ·{' '}
+              <span style={{ color: '#FF9800' }}>Signal</span>
+            </div>
+          </div>
         </div>
-      </div>
 
-      <div className="panel panel-macd" ref={macdRef}>
-        <div className="panel-label">
-          <span style={{ color: '#2196F3' }}>MACD</span> ·{' '}
-          <span style={{ color: '#FF9800' }}>Signal</span>
-        </div>
+        {/* Polymarket sidebar */}
+        <aside className="pm-sidebar">
+          <div className="pm-header">
+            <span className="pm-logo">◆ Polymarket</span>
+            <span className={`pm-status pm-status-${pmData.status}`}>
+              {pmData.status === 'live' ? '● Live' : pmData.status === 'loading' ? '◌ …' : pmData.status === 'waiting' ? '◎ Wait' : '✕ Err'}
+            </span>
+          </div>
+
+          {/* Question + countdown */}
+          <div className="pm-question">{pmData.question || 'BTC 15m — инициализация…'}</div>
+          {pmData.currentWindowTs > 0 && (
+            <div className="pm-countdown">
+              ⏱ {Math.floor(pmData.secsRemaining / 60)}:{String(pmData.secsRemaining % 60).padStart(2, '0')}
+            </div>
+          )}
+
+          {/* UP / DOWN cards */}
+          <div className="pm-outcomes">
+            <div className="pm-card pm-card-up">
+              <div className="pm-card-label">UP ▲</div>
+              <div className="pm-card-price">{pmData.priceUp > 0 ? (pmData.priceUp * 100).toFixed(1) + '¢' : '—'}</div>
+              <div className="pm-card-spread">spread: {(pmData.spreadUp * 100).toFixed(2)}¢</div>
+            </div>
+            <div className="pm-card pm-card-down">
+              <div className="pm-card-label">DOWN ▼</div>
+              <div className="pm-card-price">{pmData.priceDown > 0 ? (pmData.priceDown * 100).toFixed(1) + '¢' : '—'}</div>
+              <div className="pm-card-spread">spread: {(pmData.spreadDown * 100).toFixed(2)}¢</div>
+            </div>
+          </div>
+
+          {/* History — colored indicators */}
+          <div className="pm-history-title">История (последние окна)</div>
+          <div className="pm-history">
+            {pmData.history.length > 0 ? (
+              pmData.history.map((h, i) => {
+                const icon = h.winner === 'UP' ? '🟢' : h.winner === 'DOWN' ? '🔴' : '⚪';
+                const timeStr = new Date(h.windowStart * 1000).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+                const deltaStr = h.delta != null
+                  ? (h.delta >= 0 ? `+$${h.delta.toFixed(1)}` : `-$${Math.abs(h.delta).toFixed(1)}`)
+                  : '—';
+                return (
+                  <div key={i} className="pm-history-row">
+                    <span className="pm-history-icon">{icon}</span>
+                    <span className="pm-history-time">{timeStr}</span>
+                    <span className={`pm-history-delta ${h.delta != null && h.delta >= 0 ? 'delta-up' : 'delta-down'}`}>
+                      {deltaStr}
+                    </span>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="pm-history-empty">Нет данных</div>
+            )}
+          </div>
+
+          {pmData.statusMsg && (
+            <div className="pm-error">ℹ {pmData.statusMsg}</div>
+          )}
+        </aside>
       </div>
     </div>
   );

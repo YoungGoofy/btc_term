@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# btc — Launch BTC Trading Terminal (web)
+# Usage: btc [--build]
+
+set -euo pipefail
+
+PROJECT_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+WEB_DIR="$PROJECT_DIR/web"
+
+if [ ! -d "$WEB_DIR" ]; then
+  echo "❌ web/ directory not found at $WEB_DIR"
+  exit 1
+fi
+
+# Install deps if needed
+if [ ! -d "$WEB_DIR/node_modules" ]; then
+  echo "📦 Installing dependencies..."
+  cd "$WEB_DIR" && npm install
+fi
+
+if [ "${1:-}" = "--build" ]; then
+  echo "🔨 Building production bundle..."
+  cd "$WEB_DIR" && npm run build
+  echo "✅ Build complete: $WEB_DIR/dist/"
+else
+  echo "₿ Starting BTC Terminal on http://localhost:3000"
+  cd "$WEB_DIR" && npm run dev
+fi
