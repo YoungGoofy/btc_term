@@ -52,6 +52,19 @@ function formatTZ(date: Date, tz: string): string {
   });
 }
 
+function getTradingSession(now: Date): { name: string; emoji: string; className: string } {
+  let etHour = parseInt(now.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour12: false, hour: 'numeric' }), 10);
+  if (etHour === 24) etHour = 0;
+
+  if (etHour >= 20 || etHour < 6) return { name: 'Ночь / Азия', emoji: '✅', className: 'session-asia' };
+  if (etHour >= 6 && etHour < 10) return { name: 'Лондон + NY', emoji: '🏆', className: 'session-london-ny' };
+  if (etHour >= 10 && etHour < 15) return { name: 'NY Мидday', emoji: '⚠️', className: 'session-ny-mid' };
+  if (etHour >= 15 && etHour < 16) return { name: '15:00 Окно', emoji: '✅', className: 'session-window' };
+  if (etHour >= 16 && etHour < 20) return { name: 'Pacific', emoji: '❌', className: 'session-pacific' };
+
+  return { name: '', emoji: '', className: '' };
+}
+
 export default function App() {
   const [interval, setInterval] = useState('15m');
   const [state, setState] = useState<AppState>({
@@ -61,7 +74,12 @@ export default function App() {
     tickCount: 0,
     atrValue: 0,
   });
-  const [clocks, setClocks] = useState({ msk: '', gmt: '', et: '' });
+  const [clocks, setClocks] = useState({ 
+    msk: '', 
+    gmt: '', 
+    et: '',
+    session: { name: '', emoji: '', className: '' }
+  });
   const [pmData, setPmData] = useState<PolymarketData>(EMPTY_PM);
 
   // DOM refs for chart containers.
@@ -85,6 +103,7 @@ export default function App() {
         msk: formatTZ(now, 'Europe/Moscow'),
         gmt: formatTZ(now, 'UTC'),
         et: formatTZ(now, 'America/New_York'),
+        session: getTradingSession(now),
       });
     };
     tick();
@@ -113,22 +132,27 @@ export default function App() {
     pc.vwapSeries.setData(data.vwap.center);
     pc.vwapUpperSeries.setData(data.vwap.upper);
     pc.vwapLowerSeries.setData(data.vwap.lower);
-    pc.rsiSeries.setData(data.rsi);
+    pc.rsiSeries.setData(data.rsi.map((r) => 'value' in r ? { time: r.time, value: r.value } : { time: r.time }));
 
     // EMA panel.
-    ec.ema9Series.setData(data.ema9);
-    ec.ema21Series.setData(data.ema21);
+    ec.ema9Series.setData(data.ema9.map((e) => 'value' in e ? { time: e.time, value: e.value } : { time: e.time }));
+    ec.ema21Series.setData(data.ema21.map((e) => 'value' in e ? { time: e.time, value: e.value } : { time: e.time }));
     ec.pivotHighSeries.setData(data.pivotHighs);
     ec.pivotLowSeries.setData(data.pivotLows);
 
     // MACD panel.
-    mc.histSeries.setData(data.macd.map((m) => ({
-      time: m.time,
-      value: m.histogram,
-      color: m.histogram >= 0 ? '#26A69A' : '#EF5350',
-    })));
-    mc.macdSeries.setData(data.macd.map((m) => ({ time: m.time, value: m.macd })));
-    mc.signalSeries.setData(data.macd.map((m) => ({ time: m.time, value: m.signal })));
+    mc.histSeries.setData(data.macd.map((m) => {
+      if ('histogram' in m) {
+        return {
+          time: m.time,
+          value: m.histogram,
+          color: m.histogram >= 0 ? '#26A69A' : '#EF5350',
+        };
+      }
+      return { time: m.time };
+    }));
+    mc.macdSeries.setData(data.macd.map((m) => 'macd' in m ? { time: m.time, value: m.macd } : { time: m.time }));
+    mc.signalSeries.setData(data.macd.map((m) => 'signal' in m ? { time: m.time, value: m.signal } : { time: m.time }));
 
     // ↓↓↓ НАСТРОЙКА МАСШТАБА: измените число ниже, чтобы показывать
     //     больше (200) или меньше (30) свечей при загрузке.
@@ -157,15 +181,26 @@ export default function App() {
       pc.vwapUpperSeries.update(data.vwap.upper[data.vwap.upper.length - 1]);
       pc.vwapLowerSeries.update(data.vwap.lower[data.vwap.lower.length - 1]);
     }
-    if (data.rsi.length > 0) pc.rsiSeries.update(data.rsi[data.rsi.length - 1]);
-    if (data.ema9.length > 0) ec.ema9Series.update(data.ema9[data.ema9.length - 1]);
-    if (data.ema21.length > 0) ec.ema21Series.update(data.ema21[data.ema21.length - 1]);
+    if (data.rsi.length > 0) {
+      const r = data.rsi[data.rsi.length - 1];
+      if ('value' in r) pc.rsiSeries.update({ time: r.time, value: r.value });
+    }
+    if (data.ema9.length > 0) {
+      const e = data.ema9[data.ema9.length - 1];
+      if ('value' in e) ec.ema9Series.update({ time: e.time, value: e.value });
+    }
+    if (data.ema21.length > 0) {
+      const e = data.ema21[data.ema21.length - 1];
+      if ('value' in e) ec.ema21Series.update({ time: e.time, value: e.value });
+    }
 
     if (data.macd.length > 0) {
       const m = data.macd[data.macd.length - 1];
-      mc.histSeries.update({ time: m.time, value: m.histogram, color: m.histogram >= 0 ? '#26A69A' : '#EF5350' });
-      mc.macdSeries.update({ time: m.time, value: m.macd });
-      mc.signalSeries.update({ time: m.time, value: m.signal });
+      if ('histogram' in m) {
+        mc.histSeries.update({ time: m.time, value: m.histogram, color: m.histogram >= 0 ? '#26A69A' : '#EF5350' });
+        mc.macdSeries.update({ time: m.time, value: m.macd });
+        mc.signalSeries.update({ time: m.time, value: m.signal });
+      }
     }
   }, []);
 
@@ -183,8 +218,12 @@ export default function App() {
     emaChartRef.current = ec;
     macdChartRef.current = mc;
 
-    // Sync scrolling across all charts.
-    syncCharts([pc.chart, ec.chart, mc.chart]);
+    // Sync scrolling and crosshair across all charts.
+    syncCharts([
+      { chart: pc.chart, series: pc.candleSeries },
+      { chart: ec.chart, series: ec.ema9Series },
+      { chart: mc.chart, series: mc.macdSeries },
+    ]);
 
     // Fetch historical data.
     setState((s) => ({ ...s, loading: true, error: '', tickCount: 0 }));
@@ -272,6 +311,9 @@ export default function App() {
             ))}
           </select>
           <span className="label">Heikin Ashi</span>
+          <span className={`session-badge ${clocks.session.className}`}>
+            {clocks.session.name} {clocks.session.emoji}
+          </span>
           <span className={`atr-badge ${atr.className}`}>
             ATR: ${state.atrValue.toFixed(1)} · {atr.label}
           </span>

@@ -140,6 +140,25 @@ html, body, #root {
   animation: pulse 1s infinite;
 }
 
+/* ─── Session Badge ──────────────────────────── */
+.session-badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 6px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.3s ease;
+}
+.session-asia { color: #81C784; border-color: rgba(129, 199, 132, 0.3); background: rgba(129, 199, 132, 0.1); }
+.session-london-ny { color: var(--accent-gold); border-color: var(--accent-gold); background: rgba(240, 185, 11, 0.1); box-shadow: 0 0 8px rgba(240, 185, 11, 0.2); }
+.session-ny-mid { color: #FFB74D; border-color: rgba(255, 183, 77, 0.3); background: rgba(255, 183, 77, 0.1); }
+.session-window { color: #81C784; border-color: rgba(129, 199, 132, 0.3); background: rgba(129, 199, 132, 0.1); }
+.session-pacific { color: #E57373; border-color: rgba(229, 115, 115, 0.3); background: rgba(229, 115, 115, 0.1); }
+
 /* ─── Clocks ───────────────────────────────── */
 .clocks {
   display: flex;

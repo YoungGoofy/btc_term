@@ -6,7 +6,7 @@ import {
   ColorType,
   CrosshairMode,
 } from 'lightweight-charts';
-import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, UTCTimestamp, Time } from 'lightweight-charts';
 
 // ─── Theme ────────────────────────────────────
 
@@ -190,15 +190,43 @@ export function createMacdChart(container: HTMLElement): MacdChartBundle {
 
 // ─── Time sync between charts ─────────────────
 
-export function syncCharts(charts: IChartApi[]) {
-  charts.forEach((chart, idx) => {
-    chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+export interface SyncBundle {
+  chart: IChartApi;
+  series: ISeriesApi<any>;
+}
+
+export function syncCharts(bundles: SyncBundle[]) {
+  bundles.forEach((bundle, idx) => {
+    // 1. Sync Logical Range (zooming / panning)
+    bundle.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
       if (!range) return;
-      charts.forEach((other, otherIdx) => {
+      bundles.forEach((other, otherIdx) => {
         if (idx !== otherIdx) {
-          other.timeScale().setVisibleLogicalRange(range);
+          other.chart.timeScale().setVisibleLogicalRange(range);
         }
       });
+    });
+
+    // 2. Sync Crosshair
+    bundle.chart.subscribeCrosshairMove((param) => {
+      // If the mouse is out of the chart, clear the crosshair on others
+      if (!param.time || param.point === undefined || param.point.x < 0 || param.point.y < 0) {
+        bundles.forEach((other, otherIdx) => {
+          if (idx !== otherIdx) {
+            other.chart.clearCrosshairPosition();
+          }
+        });
+      } else {
+        // Sync the crosshair on other charts
+        bundles.forEach((other, otherIdx) => {
+          if (idx !== otherIdx) {
+            // We pass NaN for price to avoid forcing the Y axis to rescale/break on the target chart, 
+            // since each panel has a completely different price metric (e.g. 0-100 RSI vs 60000 BTC). 
+            // The X-axis (time) crosshair will render perfectly synced.
+            other.chart.setCrosshairPosition(NaN, param.time as Time, other.series);
+          }
+        });
+      }
     });
   });
 }

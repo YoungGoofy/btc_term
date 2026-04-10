@@ -81,27 +81,29 @@ export function calcVWAP(candles: Candle[]): VWAPResult {
 
 // ─── EMA (technicalindicators) ────────────────
 
-export interface LinePoint {
-  time: UTCTimestamp;
-  value: number;
-}
+export type LinePoint = { time: UTCTimestamp; value: number } | { time: UTCTimestamp };
 
 export function calcEMA(candles: Candle[], period: number): LinePoint[] {
   const closes = candles.map((c) => c.close);
   const values = EMA.calculate({ period, values: closes });
-  // EMA output is shorter (starts after `period` bars)
   const offset = candles.length - values.length;
-  return values.map((v, i) => ({ time: candles[i + offset].time as UTCTimestamp, value: v }));
+  
+  const padding: LinePoint[] = Array.from({ length: offset }).map((_, i) => ({
+    time: candles[i].time as UTCTimestamp,
+  }));
+  const data: LinePoint[] = values.map((v, i) => ({ time: candles[i + offset].time as UTCTimestamp, value: v }));
+  
+  return [...padding, ...data];
 }
 
 // ─── MACD (technicalindicators) ───────────────
 
-export interface MACDPoint {
+export type MACDPoint = {
   time: UTCTimestamp;
   macd: number;
   signal: number;
   histogram: number;
-}
+} | { time: UTCTimestamp };
 
 export function calcMACD(candles: Candle[]): MACDPoint[] {
   const closes = candles.map((c) => c.close);
@@ -114,12 +116,18 @@ export function calcMACD(candles: Candle[]): MACDPoint[] {
     SimpleMASignal: false,
   });
   const offset = candles.length - results.length;
-  return results.map((r, i) => ({
+  
+  const padding: MACDPoint[] = Array.from({ length: offset }).map((_, i) => ({
+    time: candles[i].time as UTCTimestamp,
+  }));
+  const data: MACDPoint[] = results.map((r, i) => ({
     time: candles[i + offset].time as UTCTimestamp,
     macd: r.MACD ?? 0,
     signal: r.signal ?? 0,
     histogram: r.histogram ?? 0,
   }));
+
+  return [...padding, ...data];
 }
 
 // ─── RSI (technicalindicators) ────────────────
@@ -128,7 +136,13 @@ export function calcRSI(candles: Candle[], period = 14): LinePoint[] {
   const closes = candles.map((c) => c.close);
   const values = RSI.calculate({ period, values: closes });
   const offset = candles.length - values.length;
-  return values.map((v, i) => ({ time: candles[i + offset].time as UTCTimestamp, value: v }));
+
+  const padding: LinePoint[] = Array.from({ length: offset }).map((_, i) => ({
+    time: candles[i].time as UTCTimestamp,
+  }));
+  const data: LinePoint[] = values.map((v, i) => ({ time: candles[i + offset].time as UTCTimestamp, value: v }));
+
+  return [...padding, ...data];
 }
 
 // ─── ATR (technicalindicators) ────────────────
