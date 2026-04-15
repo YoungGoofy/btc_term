@@ -50,14 +50,12 @@ export interface PriceChartBundle extends ChartBundle {
   vwapSeries: ISeriesApi<'Line'>;
   vwapUpperSeries: ISeriesApi<'Line'>;
   vwapLowerSeries: ISeriesApi<'Line'>;
-  rsiSeries: ISeriesApi<'Line'>;
-}
-
-export interface EmaChartBundle extends ChartBundle {
   ema9Series: ISeriesApi<'Line'>;
   ema21Series: ISeriesApi<'Line'>;
-  pivotHighSeries: ISeriesApi<'Line'>;
-  pivotLowSeries: ISeriesApi<'Line'>;
+}
+
+export interface RsiChartBundle extends ChartBundle {
+  rsiSeries: ISeriesApi<'Line'>;
 }
 
 export interface MacdChartBundle extends ChartBundle {
@@ -101,32 +99,6 @@ export function createPriceChart(container: HTMLElement): PriceChartBundle {
     lastValueVisible: false,
   });
 
-  // RSI on a separate left price scale (0-100).
-  const rsiSeries = chart.addSeries(LineSeries, {
-    color: '#E040FB',
-    lineWidth: 1,
-    priceScaleId: 'rsi',
-    priceLineVisible: false,
-    lastValueVisible: true,
-  });
-
-  // Configure the RSI price scale on the left side.
-  chart.priceScale('rsi').applyOptions({
-    scaleMargins: { top: 0.7, bottom: 0.02 },
-    borderVisible: false,
-  });
-
-  // RSI 30/70 reference lines.
-  rsiSeries.createPriceLine({ price: 70, color: '#787B86', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '70' });
-  rsiSeries.createPriceLine({ price: 30, color: '#787B86', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '30' });
-
-  return { chart, candleSeries, vwapSeries, vwapUpperSeries, vwapLowerSeries, rsiSeries, destroy: () => chart.remove() };
-}
-
-export function createEmaChart(container: HTMLElement): EmaChartBundle {
-  const rect = container.getBoundingClientRect();
-  const chart = createChart(container, defaultChartOptions(rect.width, rect.height));
-
   const ema9Series = chart.addSeries(LineSeries, {
     color: '#2196F3',
     lineWidth: 2,
@@ -141,25 +113,25 @@ export function createEmaChart(container: HTMLElement): EmaChartBundle {
     lastValueVisible: false,
   });
 
-  const pivotHighSeries = chart.addSeries(LineSeries, {
-    color: '#F48FB1',
+  return { chart, candleSeries, vwapSeries, vwapUpperSeries, vwapLowerSeries, ema9Series, ema21Series, destroy: () => chart.remove() };
+}
+
+export function createRsiChart(container: HTMLElement): RsiChartBundle {
+  const rect = container.getBoundingClientRect();
+  const chart = createChart(container, defaultChartOptions(rect.width, rect.height));
+
+  const rsiSeries = chart.addSeries(LineSeries, {
+    color: '#E040FB',
     lineWidth: 1,
-    pointMarkersVisible: true,
-    pointMarkersRadius: 3,
     priceLineVisible: false,
-    lastValueVisible: false,
+    lastValueVisible: true,
   });
 
-  const pivotLowSeries = chart.addSeries(LineSeries, {
-    color: '#4FC3F7',
-    lineWidth: 1,
-    pointMarkersVisible: true,
-    pointMarkersRadius: 3,
-    priceLineVisible: false,
-    lastValueVisible: false,
-  });
+  // RSI 30/70 reference lines.
+  rsiSeries.createPriceLine({ price: 70, color: '#787B86', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '70' });
+  rsiSeries.createPriceLine({ price: 30, color: '#787B86', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '30' });
 
-  return { chart, ema9Series, ema21Series, pivotHighSeries, pivotLowSeries, destroy: () => chart.remove() };
+  return { chart, rsiSeries, destroy: () => chart.remove() };
 }
 
 export function createMacdChart(container: HTMLElement): MacdChartBundle {

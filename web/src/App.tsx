@@ -5,14 +5,14 @@ import { computeAll } from './indicators';
 import type { ComputedData } from './indicators';
 import {
   createPriceChart,
-  createEmaChart,
+  createRsiChart,
   createMacdChart,
   syncCharts,
   resizeChart,
 } from './chartSetup';
 import type {
   PriceChartBundle,
-  EmaChartBundle,
+  RsiChartBundle,
   MacdChartBundle,
 } from './chartSetup';
 import type { Candle } from './types';
@@ -84,12 +84,12 @@ export default function App() {
 
   // DOM refs for chart containers.
   const priceRef = useRef<HTMLDivElement>(null);
-  const emaRef = useRef<HTMLDivElement>(null);
+  const rsiRef = useRef<HTMLDivElement>(null);
   const macdRef = useRef<HTMLDivElement>(null);
 
   // Chart bundle refs (imperative, outside React state for performance).
   const priceChartRef = useRef<PriceChartBundle | null>(null);
-  const emaChartRef = useRef<EmaChartBundle | null>(null);
+  const rsiChartRef = useRef<RsiChartBundle | null>(null);
   const macdChartRef = useRef<MacdChartBundle | null>(null);
   const candlesRef = useRef<Candle[]>([]);
   const wsRef = useRef<BinanceWsInstance | null>(null);
@@ -121,9 +121,9 @@ export default function App() {
   // Feed computed data to all chart series.
   const setAllData = useCallback((data: ComputedData) => {
     const pc = priceChartRef.current;
-    const ec = emaChartRef.current;
+    const rc = rsiChartRef.current;
     const mc = macdChartRef.current;
-    if (!pc || !ec || !mc) return;
+    if (!pc || !rc || !mc) return;
 
     // Price panel.
     pc.candleSeries.setData(data.ha.map((c) => ({
@@ -132,13 +132,11 @@ export default function App() {
     pc.vwapSeries.setData(data.vwap.center);
     pc.vwapUpperSeries.setData(data.vwap.upper);
     pc.vwapLowerSeries.setData(data.vwap.lower);
-    pc.rsiSeries.setData(data.rsi.map((r) => 'value' in r ? { time: r.time, value: r.value } : { time: r.time }));
+    pc.ema9Series.setData(data.ema9.map((e) => 'value' in e ? { time: e.time, value: e.value } : { time: e.time }));
+    pc.ema21Series.setData(data.ema21.map((e) => 'value' in e ? { time: e.time, value: e.value } : { time: e.time }));
 
-    // EMA panel.
-    ec.ema9Series.setData(data.ema9.map((e) => 'value' in e ? { time: e.time, value: e.value } : { time: e.time }));
-    ec.ema21Series.setData(data.ema21.map((e) => 'value' in e ? { time: e.time, value: e.value } : { time: e.time }));
-    ec.pivotHighSeries.setData(data.pivotHighs);
-    ec.pivotLowSeries.setData(data.pivotLows);
+    // RSI panel.
+    rc.rsiSeries.setData(data.rsi.map((r) => 'value' in r ? { time: r.time, value: r.value } : { time: r.time }));
 
     // MACD panel.
     mc.histSeries.setData(data.macd.map((m) => {
@@ -160,16 +158,16 @@ export default function App() {
     const totalBars = data.ha.length;
     const range = { from: totalBars - VISIBLE_BARS, to: totalBars };
     pc.chart.timeScale().setVisibleLogicalRange(range);
-    ec.chart.timeScale().setVisibleLogicalRange(range);
+    rc.chart.timeScale().setVisibleLogicalRange(range);
     mc.chart.timeScale().setVisibleLogicalRange(range);
   }, []);
 
   // Update last data point on each tick (efficient — no full redraw).
   const updateLast = useCallback((data: ComputedData) => {
     const pc = priceChartRef.current;
-    const ec = emaChartRef.current;
+    const rc = rsiChartRef.current;
     const mc = macdChartRef.current;
-    if (!pc || !ec || !mc) return;
+    if (!pc || !rc || !mc) return;
 
     const ha = data.ha;
     if (ha.length > 0) {
@@ -181,17 +179,17 @@ export default function App() {
       pc.vwapUpperSeries.update(data.vwap.upper[data.vwap.upper.length - 1]);
       pc.vwapLowerSeries.update(data.vwap.lower[data.vwap.lower.length - 1]);
     }
-    if (data.rsi.length > 0) {
-      const r = data.rsi[data.rsi.length - 1];
-      if ('value' in r) pc.rsiSeries.update({ time: r.time, value: r.value });
-    }
     if (data.ema9.length > 0) {
       const e = data.ema9[data.ema9.length - 1];
-      if ('value' in e) ec.ema9Series.update({ time: e.time, value: e.value });
+      if ('value' in e) pc.ema9Series.update({ time: e.time, value: e.value });
     }
     if (data.ema21.length > 0) {
       const e = data.ema21[data.ema21.length - 1];
-      if ('value' in e) ec.ema21Series.update({ time: e.time, value: e.value });
+      if ('value' in e) pc.ema21Series.update({ time: e.time, value: e.value });
+    }
+    if (data.rsi.length > 0) {
+      const r = data.rsi[data.rsi.length - 1];
+      if ('value' in r) rc.rsiSeries.update({ time: r.time, value: r.value });
     }
 
     if (data.macd.length > 0) {
@@ -207,21 +205,21 @@ export default function App() {
   // ─── Main effect: create charts, fetch data, connect WS ─────
 
   useEffect(() => {
-    if (!priceRef.current || !emaRef.current || !macdRef.current) return;
+    if (!priceRef.current || !rsiRef.current || !macdRef.current) return;
 
     // Create chart instances.
     const pc = createPriceChart(priceRef.current);
-    const ec = createEmaChart(emaRef.current);
+    const rc = createRsiChart(rsiRef.current);
     const mc = createMacdChart(macdRef.current);
 
     priceChartRef.current = pc;
-    emaChartRef.current = ec;
+    rsiChartRef.current = rc;
     macdChartRef.current = mc;
 
     // Sync scrolling and crosshair across all charts.
     syncCharts([
       { chart: pc.chart, series: pc.candleSeries },
-      { chart: ec.chart, series: ec.ema9Series },
+      { chart: rc.chart, series: rc.rsiSeries },
       { chart: mc.chart, series: mc.macdSeries },
     ]);
 
@@ -271,7 +269,7 @@ export default function App() {
     // Resize handler.
     const onResize = () => {
       if (priceRef.current) resizeChart(pc.chart, priceRef.current);
-      if (emaRef.current) resizeChart(ec.chart, emaRef.current);
+      if (rsiRef.current) resizeChart(rc.chart, rsiRef.current);
       if (macdRef.current) resizeChart(mc.chart, macdRef.current);
     };
     window.addEventListener('resize', onResize);
@@ -279,7 +277,7 @@ export default function App() {
     return () => {
       ws.close();
       pc.destroy();
-      ec.destroy();
+      rc.destroy();
       mc.destroy();
       window.removeEventListener('resize', onResize);
     };
@@ -338,13 +336,11 @@ export default function App() {
         <div className="charts-column">
           <div className="panel panel-price" ref={priceRef}>
             {state.loading && <div className="loading-overlay"><div className="spinner" />Loading…</div>}
-            <div className="panel-label">Price · <span style={{ color: '#FF9800' }}>VWAP</span> · <span style={{ color: '#E040FB' }}>RSI</span></div>
+            <div className="panel-label">Price · <span style={{ color: '#FF9800' }}>VWAP</span> · <span style={{ color: '#2196F3' }}>EMA 9</span> · <span style={{ color: '#9C27B0' }}>EMA 21</span></div>
           </div>
-          <div className="panel panel-ema" ref={emaRef}>
+          <div className="panel panel-rsi" ref={rsiRef}>
             <div className="panel-label">
-              <span style={{ color: '#2196F3' }}>EMA 9</span> ·{' '}
-              <span style={{ color: '#9C27B0' }}>EMA 21</span> ·{' '}
-              <span style={{ color: '#F48FB1' }}>Pivots HL</span>
+              <span style={{ color: '#E040FB' }}>RSI</span>
             </div>
           </div>
           <div className="panel panel-macd" ref={macdRef}>
