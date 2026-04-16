@@ -8,9 +8,11 @@ const WS_BASE = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${win
 export async function fetchKlines(
   symbol: string,
   interval: string,
-  limit = 500
+  limit = 500,
+  startTime?: number
 ): Promise<Candle[]> {
-  const url = `${REST_BASE}/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+  let url = `${REST_BASE}/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+  if (startTime) url += `&startTime=${startTime}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`REST ${res.status}: ${res.statusText}`);
   const raw: BinanceKlineRaw[] = await res.json();

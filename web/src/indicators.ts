@@ -1,4 +1,4 @@
-import { EMA, MACD, RSI, ATR } from 'technicalindicators';
+import { EMA, MACD, RSI, ATR, StochasticRSI, BollingerBands } from 'technicalindicators';
 import type { UTCTimestamp } from 'lightweight-charts';
 import type { Candle } from './types';
 
@@ -156,6 +156,40 @@ export function calcATR(candles: Candle[], period = 14): number {
   return values.length > 0 ? values[values.length - 1] : 0;
 }
 
+// ─── StochasticRSI ────────────────────────────
+
+export interface StochRSIPoint {
+  time: UTCTimestamp;
+  k: number;
+  d: number;
+  stochRSI: number;
+}
+export function calcStochRSI(candles: Candle[], rsiPeriod = 14, stochPeriod = 14, kPeriod = 3, dPeriod = 3) {
+  const closes = candles.map((c) => c.close);
+  const values = StochasticRSI.calculate({ rsiPeriod, stochasticPeriod: stochPeriod, kPeriod, dPeriod, values: closes });
+  const offset = candles.length - values.length;
+  const padding = Array.from({ length: offset }).map((_, i) => ({ time: candles[i].time as UTCTimestamp }));
+  const data = values.map((v, i) => ({ time: candles[i + offset].time as UTCTimestamp, k: v.k, d: v.d, stochRSI: v.stochRSI }));
+  return [...padding, ...data] as (StochRSIPoint | { time: UTCTimestamp })[];
+}
+
+// ─── Bollinger Bands ──────────────────────────
+
+export interface BBPoint {
+  time: UTCTimestamp;
+  upper: number;
+  middle: number;
+  lower: number;
+}
+export function calcBB(candles: Candle[], period = 20, stdDev = 2) {
+  const closes = candles.map((c) => c.close);
+  const values = BollingerBands.calculate({ period, stdDev, values: closes });
+  const offset = candles.length - values.length;
+  const padding = Array.from({ length: offset }).map((_, i) => ({ time: candles[i].time as UTCTimestamp }));
+  const data = values.map((v, i) => ({ time: candles[i + offset].time as UTCTimestamp, upper: v.upper, middle: v.middle, lower: v.lower }));
+  return [...padding, ...data] as (BBPoint | { time: UTCTimestamp })[];
+}
+
 // ─── Pivots HL 10 (manual) ────────────────────
 
 export function calcPivots(
@@ -199,6 +233,8 @@ export interface ComputedData {
   atrValue: number;
   pivotHighs: LinePoint[];
   pivotLows: LinePoint[];
+  stochRSI: (StochRSIPoint | { time: UTCTimestamp })[];
+  bb: (BBPoint | { time: UTCTimestamp })[];
 }
 
 export function computeAll(candles: Candle[]): ComputedData {
@@ -210,5 +246,58 @@ export function computeAll(candles: Candle[]): ComputedData {
   const rsi = calcRSI(candles);
   const atrValue = calcATR(candles);
   const { highs: pivotHighs, lows: pivotLows } = calcPivots(ha);
-  return { ha, vwap, ema9, ema21, macd, rsi, atrValue, pivotHighs, pivotLows };
+  const stochRSI = calcStochRSI(candles);
+  const bb = calcBB(candles);
+  return { ha, vwap, ema9, ema21, macd, rsi, atrValue, pivotHighs, pivotLows, stochRSI, bb };
+}
+
+/**
+ * Lightweight recompute: only recalculate fast indicators for the last candle.
+ * Reuses pivots/stochRSI/bb from the previous full computation.
+ * Should be called on intra-candle ticks (isClosed = false).
+ * Full computeAll should be called when isClosed = true.
+ */
+export function computeLastOnly(candles: Candle[], prev: ComputedData): ComputedData {
+  // HA: recompute last candle only
+  const ha = [...prev.ha];
+  if (candles.length > 0) {
+    const c = candles[candles.length - 1];
+    const haClose = (c.open + c.high + c.low + c.close) / 4;
+    const haOpen = ha.length >= 2
+      ? (ha[ha.length - 2].open + ha[ha.length - 2].close) / 2
+      : (c.open + c.close) / 2;
+    const haHigh = Math.max(c.high, haOpen, haClose);
+    const haLow = Math.min(c.low, haOpen, haClose);
+    const newHa: HACandle = { time: c.time as UTCTimestamp, open: haOpen, high: haHigh, low: haLow, close: haClose };
+    if (ha.length > 0 && ha[ha.length - 1].time === newHa.time) {
+      ha[ha.length - 1] = newHa;
+    } else {
+      ha.push(newHa);
+    }
+  }
+
+  // VWAP: full recalc is cheap (single pass), keep it
+  const vwap = calcVWAP(candles);
+
+  // EMA/MACD/RSI: recalculate fully (library doesn't support incremental)
+  // but keep pivots/stochRSI/bb from prev (expensive + don't change intra-candle)
+  const ema9 = calcEMA(candles, 9);
+  const ema21 = calcEMA(candles, 21);
+  const macd = calcMACD(candles);
+  const rsi = calcRSI(candles);
+  const atrValue = calcATR(candles);
+
+  return {
+    ha,
+    vwap,
+    ema9,
+    ema21,
+    macd,
+    rsi,
+    atrValue,
+    pivotHighs: prev.pivotHighs,  // Unchanged intra-candle
+    pivotLows: prev.pivotLows,    // Unchanged intra-candle
+    stochRSI: prev.stochRSI,     // Unchanged intra-candle (expensive)
+    bb: prev.bb,                  // Unchanged intra-candle (expensive)
+  };
 }

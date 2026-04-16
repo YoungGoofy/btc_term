@@ -29,7 +29,10 @@ function defaultChartOptions(width: number, height: number) {
       horzLines: { color: GRID_COLOR },
     },
     crosshair: { mode: CrosshairMode.Normal },
-    rightPriceScale: { borderColor: BORDER_COLOR },
+    rightPriceScale: { 
+      borderColor: BORDER_COLOR,
+      minimumWidth: 80, // Фиксированная ширина для идеального выравнивания таймлайна между панелями
+    },
     timeScale: {
       borderColor: BORDER_COLOR,
       timeVisible: true,
@@ -52,10 +55,16 @@ export interface PriceChartBundle extends ChartBundle {
   vwapLowerSeries: ISeriesApi<'Line'>;
   ema9Series: ISeriesApi<'Line'>;
   ema21Series: ISeriesApi<'Line'>;
+  bbUpperSeries: ISeriesApi<'Line'>;
+  bbLowerSeries: ISeriesApi<'Line'>;
+  pivotHighSeries: ISeriesApi<'Line'>;
+  pivotLowSeries: ISeriesApi<'Line'>;
 }
 
 export interface RsiChartBundle extends ChartBundle {
   rsiSeries: ISeriesApi<'Line'>;
+  stochKSeries: ISeriesApi<'Line'>;
+  stochDSeries: ISeriesApi<'Line'>;
 }
 
 export interface MacdChartBundle extends ChartBundle {
@@ -113,7 +122,41 @@ export function createPriceChart(container: HTMLElement): PriceChartBundle {
     lastValueVisible: false,
   });
 
-  return { chart, candleSeries, vwapSeries, vwapUpperSeries, vwapLowerSeries, ema9Series, ema21Series, destroy: () => chart.remove() };
+  const bbUpperSeries = chart.addSeries(LineSeries, {
+    color: 'rgba(33, 150, 243, 0.5)',
+    lineWidth: 1,
+    lineStyle: 2,
+    priceLineVisible: false,
+    lastValueVisible: false,
+  });
+
+  const bbLowerSeries = chart.addSeries(LineSeries, {
+    color: 'rgba(33, 150, 243, 0.5)',
+    lineWidth: 1,
+    lineStyle: 2,
+    priceLineVisible: false,
+    lastValueVisible: false,
+  });
+
+  const pivotHighSeries = chart.addSeries(LineSeries, {
+    color: '#FF5252',
+    lineWidth: 2,
+    lineStyle: 2, // Dashed
+    priceLineVisible: false,
+    lastValueVisible: false,
+    crosshairMarkerVisible: false,
+  });
+
+  const pivotLowSeries = chart.addSeries(LineSeries, {
+    color: '#4CAF50',
+    lineWidth: 2,
+    lineStyle: 2, // Dashed
+    priceLineVisible: false,
+    lastValueVisible: false,
+    crosshairMarkerVisible: false,
+  });
+
+  return { chart, candleSeries, vwapSeries, vwapUpperSeries, vwapLowerSeries, ema9Series, ema21Series, bbUpperSeries, bbLowerSeries, pivotHighSeries, pivotLowSeries, destroy: () => chart.remove() };
 }
 
 export function createRsiChart(container: HTMLElement): RsiChartBundle {
@@ -131,7 +174,25 @@ export function createRsiChart(container: HTMLElement): RsiChartBundle {
   rsiSeries.createPriceLine({ price: 70, color: '#787B86', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '70' });
   rsiSeries.createPriceLine({ price: 30, color: '#787B86', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: '30' });
 
-  return { chart, rsiSeries, destroy: () => chart.remove() };
+  // Stoch RSI reference lines.
+  rsiSeries.createPriceLine({ price: 80, color: 'rgba(120, 123, 134, 0.5)', lineWidth: 1, lineStyle: 3, axisLabelVisible: false });
+  rsiSeries.createPriceLine({ price: 20, color: 'rgba(120, 123, 134, 0.5)', lineWidth: 1, lineStyle: 3, axisLabelVisible: false });
+
+  const stochKSeries = chart.addSeries(LineSeries, {
+    color: '#00BCD4',
+    lineWidth: 1,
+    priceLineVisible: false,
+    lastValueVisible: true,
+  });
+
+  const stochDSeries = chart.addSeries(LineSeries, {
+    color: '#FF9800',
+    lineWidth: 1,
+    priceLineVisible: false,
+    lastValueVisible: true,
+  });
+
+  return { chart, rsiSeries, stochKSeries, stochDSeries, destroy: () => chart.remove() };
 }
 
 export function createMacdChart(container: HTMLElement): MacdChartBundle {
@@ -140,7 +201,7 @@ export function createMacdChart(container: HTMLElement): MacdChartBundle {
 
   const histSeries = chart.addSeries(HistogramSeries, {
     priceLineVisible: false,
-    lastValueVisible: false,
+    lastValueVisible: true,
   });
 
   const macdSeries = chart.addSeries(LineSeries, {
@@ -168,19 +229,25 @@ export interface SyncBundle {
 }
 
 export function syncCharts(bundles: SyncBundle[]) {
+  let isSyncing = false;
+
   bundles.forEach((bundle, idx) => {
     // 1. Sync Logical Range (zooming / panning)
     bundle.chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-      if (!range) return;
+      if (isSyncing || !range) return;
+      isSyncing = true;
       bundles.forEach((other, otherIdx) => {
         if (idx !== otherIdx) {
           other.chart.timeScale().setVisibleLogicalRange(range);
         }
       });
+      isSyncing = false;
     });
 
     // 2. Sync Crosshair
     bundle.chart.subscribeCrosshairMove((param) => {
+      if (isSyncing) return;
+      isSyncing = true;
       // If the mouse is out of the chart, clear the crosshair on others
       if (!param.time || param.point === undefined || param.point.x < 0 || param.point.y < 0) {
         bundles.forEach((other, otherIdx) => {
@@ -192,13 +259,11 @@ export function syncCharts(bundles: SyncBundle[]) {
         // Sync the crosshair on other charts
         bundles.forEach((other, otherIdx) => {
           if (idx !== otherIdx) {
-            // We pass NaN for price to avoid forcing the Y axis to rescale/break on the target chart, 
-            // since each panel has a completely different price metric (e.g. 0-100 RSI vs 60000 BTC). 
-            // The X-axis (time) crosshair will render perfectly synced.
             other.chart.setCrosshairPosition(NaN, param.time as Time, other.series);
           }
         });
       }
+      isSyncing = false;
     });
   });
 }
