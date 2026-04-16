@@ -21,8 +21,8 @@ export interface BinanceWSMessage {
 }
 
 export interface BinanceWSKline {
-  t: number;  // kline open time (ms)
-  T: number;  // kline close time (ms)
+  t: number;
+  T: number;
   o: string;
   h: string;
   l: string;

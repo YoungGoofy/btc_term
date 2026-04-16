@@ -1,0 +1,34 @@
+name: Deploy to Server
+
+# Запускать этот скрипт при каждом push в ветку main
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Deploy to Prod
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Выполнение команд на сервере по SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          # Команды, которые будут выполнены на твоем сервере:
+          script: |
+            echo "🚀 Начало деплоя..."
+            
+            # ВАЖНО: Замени этот путь на тот, где лежит проект на твоем сервере!
+            cd ~/btc_term
+            
+            # Забираем свежий код из GitHub
+            git pull origin main
+            
+            # Пересобираем и перезапускаем сервер (кэш Docker сделает это быстро)
+            docker-compose up -d --build
+            
+            echo "✅ Деплой успешно завершен!"
