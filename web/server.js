@@ -44,12 +44,13 @@ app.use('/binance-fapi', createProxyMiddleware({
   pathRewrite: { '^/binance-fapi': '' },
 }));
 
-app.use('/binance-ws', createProxyMiddleware({
+const binanceWsProxy = createProxyMiddleware({
   target: 'wss://fstream.binance.com',
   changeOrigin: true,
   ws: true,
   pathRewrite: { '^/binance-ws': '' },
-}));
+});
+app.use('/binance-ws', binanceWsProxy);
 
 app.use('/gamma-api', createProxyMiddleware({
   target: 'https://gamma-api.polymarket.com',
@@ -63,12 +64,13 @@ app.use('/clob-api', createProxyMiddleware({
   pathRewrite: { '^/clob-api': '' },
 }));
 
-app.use('/pm-ws', createProxyMiddleware({
+const pmWsProxy = createProxyMiddleware({
   target: 'wss://ws-subscriptions-clob.polymarket.com',
   changeOrigin: true,
   ws: true,
   pathRewrite: { '^/pm-ws': '' },
-}));
+});
+app.use('/pm-ws', pmWsProxy);
 
 // Раздача статики собранного React приложения
 app.use(express.static(path.join(__dirname, 'dist')));
@@ -78,7 +80,19 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Production Terminal Server running on port ${PORT}`);
   console.log(`📂 Log file path configured as: ${LOG_FILE_PATH}`);
+});
+
+// VERY IMPORTANT: Express doesn't automatically upgrade websockets for middlewares.
+// We must manually pass upgrade events to our proxy middleware instances.
+server.on('upgrade', (req, socket, head) => {
+  if (req.url.startsWith('/binance-ws')) {
+    binanceWsProxy.upgrade(req, socket, head);
+  } else if (req.url.startsWith('/pm-ws')) {
+    pmWsProxy.upgrade(req, socket, head);
+  } else {
+    socket.destroy();
+  }
 });
