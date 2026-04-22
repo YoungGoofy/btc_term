@@ -31,6 +31,7 @@ app.post('/api/save-log', (req, res) => {
     }
     
     res.json({ success: true });
+    
   } catch (err) {
     console.error('Error saving log:', err);
     res.status(500).json({ error: String(err) });
