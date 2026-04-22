@@ -28,7 +28,14 @@ jobs:
             # Забираем свежий код из GitHub
             git pull origin main
             
-            # Пересобираем и перезапускаем сервер (кэш Docker сделает это быстро)
-            docker-compose up -d --build
+            # Фикс ошибки 'ContainerConfig' для старых версий docker-compose.
+            # Если есть новый плагин 'docker compose', используем его. 
+            # Иначе безопасно перезапускаем через старый 'docker-compose'.
+            if docker compose version >/dev/null 2>&1; then
+              docker compose up -d --build
+            else
+              docker-compose down
+              docker-compose up -d --build
+            fi
             
             echo "✅ Деплой успешно завершен!"
