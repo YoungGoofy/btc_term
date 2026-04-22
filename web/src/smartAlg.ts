@@ -1,6 +1,7 @@
 import type { MTFRecord } from './mtf';
 import type { PolymarketData } from './polymarket';
 import type { ComputedData, StochRSIPoint, BBPoint, MACDPoint, LinePoint, HACandle } from './indicators';
+import { getLogEntries } from './signalLog';
 
 export type VerdictAction = 'ВХОД UP' | 'ВХОД DOWN' | 'ЖДАТЬ' | 'ПРОПУСТИТЬ' | 'ОЖИДАЙТЕ';
 
@@ -97,14 +98,35 @@ function getAtrConfig(atr: number, interval: string) {
 
 const VOTE_THRESHOLD = 0.08;
 
+/**
+ * RSI Trend-Confirmation Mode
+ * RSI > 55 → подтверждает UP-тренд (положительный вес)
+ * RSI < 45 → подтверждает DOWN-тренд (отрицательный вес)
+ * RSI 45–55 → нейтральная зона
+ * Экстремумы (>75 / <25) обрабатываются отдельно как reversalPenalty
+ */
 function rsiWeight(rsi: number): number {
-  if (rsi <= 20) return 1.0;
-  if (rsi >= 80) return -1.0;
-  if (rsi <= 30) return 0.5 + 0.5 * ((30 - rsi) / 10);
-  if (rsi >= 70) return -(0.5 + 0.5 * ((rsi - 70) / 10));
-  if (rsi >= 47 && rsi <= 53) return 0;
-  if (rsi < 47) return 0.5 * ((47 - rsi) / 17);
-  return -0.5 * ((rsi - 53) / 17);
+  // Trend confirmation: RSI подтверждает направление
+  if (rsi >= 55) {
+    // Чем выше RSI, тем сильнее подтверждение UP (до 0.5)
+    return Math.min(0.5, 0.3 + 0.2 * ((rsi - 55) / 25));
+  }
+  if (rsi <= 45) {
+    // Чем ниже RSI, тем сильнее подтверждение DOWN (до -0.5)
+    return Math.max(-0.5, -(0.3 + 0.2 * ((45 - rsi) / 25)));
+  }
+  // Neutral zone 45-55
+  return 0;
+}
+
+/**
+ * RSI Reversal Penalty — только ЭКСТРЕМАЛЬНЫЕ значения сигнализируют о развороте
+ * Применяется к confidence после расчёта направления
+ */
+function rsiReversalPenalty(rsi: number, direction: 'UP' | 'DOWN' | 'NONE'): number {
+  if (direction === 'UP' && rsi > 75) return -0.05;
+  if (direction === 'DOWN' && rsi < 25) return -0.05;
+  return 0;
 }
 
 function macdHistWeight(histogram: number, atr: number): number {
@@ -227,6 +249,48 @@ function mtfWeight(mtf: MTFRecord, currentInterval: string): { weight: number, s
   return { weight: Math.max(-1, Math.min(1, total)), statuses };
 }
 
+// ────── Streak Detection (cooldown after 5 consecutive losses) ──────
+
+const STREAK_COOLDOWN_LOSSES = 5;
+const STREAK_COOLDOWN_HOURS = 2;
+
+function checkStreakCooldown(): { onCooldown: boolean; streak: number; cooldownEnd?: string } {
+  try {
+    const entries = getLogEntries();
+    if (entries.length === 0) return { onCooldown: false, streak: 0 };
+
+    // Count consecutive losses from the beginning (most recent first)
+    let lossStreak = 0;
+    let lastLossTime: string | undefined;
+    for (const e of entries) {
+      if (e.result === 'pending') continue; // skip pending
+      if (e.result === 'loss') {
+        lossStreak++;
+        if (!lastLossTime && e.resultTimestamp) lastLossTime = e.resultTimestamp;
+      } else {
+        break; // WIN or any other result breaks the streak
+      }
+    }
+
+    if (lossStreak >= STREAK_COOLDOWN_LOSSES && lastLossTime) {
+      const lastLoss = new Date(lastLossTime);
+      const cooldownEnd = new Date(lastLoss.getTime() + STREAK_COOLDOWN_HOURS * 60 * 60 * 1000);
+      const now = new Date();
+      if (now < cooldownEnd) {
+        return {
+          onCooldown: true,
+          streak: lossStreak,
+          cooldownEnd: cooldownEnd.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+        };
+      }
+    }
+
+    return { onCooldown: false, streak: lossStreak };
+  } catch {
+    return { onCooldown: false, streak: 0 };
+  }
+}
+
 // ────── RSI Divergence ──────
 
 function rsiDivergenceWeight(ha: HACandle[], rsiArr: LinePoint[]): number {
@@ -324,6 +388,14 @@ export function computePrediction(mtf: MTFRecord, pmData: PolymarketData, curren
   const now = new Date();
   const macroStop = checkMacroStops(now);
   if (macroStop) { v.action = 'ПРОПУСТИТЬ'; v.factors.conflicts.push(macroStop); return v; }
+
+  // 1b. Streak cooldown: 5 LOSS подряд → пауза 2 часа
+  const streakInfo = checkStreakCooldown();
+  if (streakInfo.onCooldown) {
+    v.action = 'ПРОПУСТИТЬ';
+    v.factors.conflicts.push(`Cooldown: ${streakInfo.streak} LOSS подряд. Пауза до ${streakInfo.cooldownEnd}`);
+    return v;
+  }
 
   // 2. ATR config (timeframe-adaptive)
   const atrVal = dBase.atrValue;
@@ -462,6 +534,10 @@ export function computePrediction(mtf: MTFRecord, pmData: PolymarketData, curren
   if (direction === 'UP' && wRsiDiv < 0) bonus -= 0.08;
   if (direction === 'DOWN' && wRsiDiv > 0) bonus -= 0.08;
 
+  // RSI reversal penalty for extreme values
+  const rsiRevPenalty = rsiReversalPenalty(rsi15, direction);
+  bonus += rsiRevPenalty;
+
   let confidence = baseConf + bonus;
 
   // 9. Penalties
@@ -474,17 +550,47 @@ export function computePrediction(mtf: MTFRecord, pmData: PolymarketData, curren
     confidence -= 0.05;
   }
 
-  // PM constraint — only when live
+  // PM constraint — aggressive PM price filter
   let wPm = 0;
+  let pmBlocked = false;
   if (pmData.status === 'live' && direction !== 'NONE') {
     const pmPrice = direction === 'UP' ? pmData.priceUp : pmData.priceDown;
-    if (pmPrice >= 0.20 && pmPrice <= 0.70) {
-      v.factors.pm = { text: `Ок (${(pmPrice * 100).toFixed(0)}¢)`, color: '#26A69A', weight: 0 };
-    } else if (pmPrice > 0) {
+    const pmPriceCents = pmPrice * 100;
+
+    if (pmPrice > 0 && pmPrice < 0.35) {
+      // HARD GATE: PM-цена < 35¢ по нашему направлению → рынок сильно против → БЛОК
+      pmBlocked = true;
+      wPm = -0.20;
+      confidence += wPm;
+      v.factors.conflicts.push(`PM БЛОК: рынок против (${pmPriceCents.toFixed(0)}¢ < 35¢)`);
+      v.factors.pm = { text: `⛔ Блок (${pmPriceCents.toFixed(0)}¢)`, color: '#EF5350', weight: wPm };
+    } else if (pmPrice >= 0.35 && pmPrice < 0.40) {
+      // Danger zone 35-40¢: сильный штраф
+      wPm = -0.10;
+      confidence += wPm;
+      v.factors.conflicts.push(`PM Опасная зона: ${pmPriceCents.toFixed(0)}¢`);
+      v.factors.pm = { text: `⚠ Опасно (${pmPriceCents.toFixed(0)}¢)`, color: '#FF9800', weight: wPm };
+    } else if (pmPrice >= 0.40 && pmPrice < 0.50) {
+      // Neutral-low 40-50¢: небольшой штраф
       wPm = -0.03;
       confidence += wPm;
-      v.factors.conflicts.push(`PM Цена вне зоны: ${(pmPrice * 100).toFixed(0)}¢`);
-      v.factors.pm = { text: `Вне зоны (${(pmPrice * 100).toFixed(0)}¢)`, color: '#EF5350', weight: wPm };
+      v.factors.pm = { text: `Нейтрал (${pmPriceCents.toFixed(0)}¢)`, color: '#9E9E9E', weight: wPm };
+    } else if (pmPrice >= 0.50 && pmPrice < 0.60) {
+      // Favorable 50-60¢: бонус
+      wPm = 0.05;
+      confidence += wPm;
+      v.factors.pm = { text: `Ок (${pmPriceCents.toFixed(0)}¢)`, color: '#26A69A', weight: wPm };
+    } else if (pmPrice >= 0.60 && pmPrice <= 0.70) {
+      // Strong 60-70¢: хороший бонус
+      wPm = 0.08;
+      confidence += wPm;
+      v.factors.pm = { text: `Сильный (${pmPriceCents.toFixed(0)}¢)`, color: '#26A69A', weight: wPm };
+    } else if (pmPrice > 0.70) {
+      // Already moved >70¢ — too late
+      wPm = -0.05;
+      confidence += wPm;
+      v.factors.conflicts.push(`PM: Поздно для входа (${pmPriceCents.toFixed(0)}¢)`);
+      v.factors.pm = { text: `Поздно (${pmPriceCents.toFixed(0)}¢)`, color: '#FF9800', weight: wPm };
     }
   } else if (pmData.status !== 'live') {
     v.factors.pm = { text: 'Ожидание маркета', color: '#9E9E9E', weight: 0 };
@@ -511,17 +617,21 @@ export function computePrediction(mtf: MTFRecord, pmData: PolymarketData, curren
   v.factors.atr = { text: `${atrCfg.mode} ($${atrVal.toFixed(0)}) [${wAtrZone.toFixed(2)}]`, color: atrCfg.limit ? '#EF5350' : '#26A69A', weight: wAtrZone };
 
   // 11. Final decision
-  const ENTRY_THRESHOLD = 0.35;
+  const ENTRY_THRESHOLD = 0.40;
   if (v.action !== 'ПРОПУСТИТЬ' && v.action !== 'ОЖИДАЙТЕ') {
     if (direction !== 'NONE' && confidence >= ENTRY_THRESHOLD) {
-      // Check if PM price already shows the move happened (>70¢ or <20¢)
-      const pmPrice = direction === 'UP' ? pmData.priceUp : pmData.priceDown;
-      if (pmData.status === 'live' && pmPrice > 0.70) {
-        // Price already moved in our direction — too late (conflict text already added in section 9)
-        v.action = pmData.secsRemaining > 300 ? 'ОЖИДАЙТЕ' : 'ПРОПУСТИТЬ';
-      } else if (pmData.status === 'live' && pmPrice > 0 && pmPrice < 0.20) {
-        // PM price says opposite direction is winning (conflict text already added in section 9)
-        v.action = pmData.secsRemaining > 300 ? 'ОЖИДАЙТЕ' : 'ПРОПУСТИТЬ';
+      // PM hard gate: blocked by low PM price
+      if (pmBlocked) {
+        v.action = 'ПРОПУСТИТЬ';
+        v.factors.conflicts.push('PM фильтр: вход заблокирован');
+      // Check if PM price already shows the move happened (>70¢)
+      } else if (pmData.status === 'live') {
+        const pmPrice = direction === 'UP' ? pmData.priceUp : pmData.priceDown;
+        if (pmPrice > 0.70) {
+          v.action = pmData.secsRemaining > 300 ? 'ОЖИДАЙТЕ' : 'ПРОПУСТИТЬ';
+        } else {
+          v.action = direction === 'UP' ? 'ВХОД UP' : 'ВХОД DOWN';
+        }
       } else {
         v.action = direction === 'UP' ? 'ВХОД UP' : 'ВХОД DOWN';
       }

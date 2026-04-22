@@ -75,6 +75,16 @@ export default defineConfig({
         ws: true,
         rewrite: (path) => path.replace(/^\/pm-ws/, ''),
       },
+      // RL Agent training dashboard
+      '/training': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+      '/ws/training': {
+        target: 'ws://localhost:8080',
+        changeOrigin: true,
+        ws: true,
+      },
     },
   },
 });

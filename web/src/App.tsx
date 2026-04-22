@@ -23,6 +23,9 @@ import type { MTFRecord } from './mtf';
 import { computePrediction } from './smartAlg';
 import type { SmartVerdict } from './smartAlg';
 import { logSignalEntry, logSignalResult, downloadLog } from './signalLog';
+import { useRLPrediction } from './hooks/useRLPrediction';
+import { combineVerdicts } from './combineVerdicts';
+import type { CombinedVerdict } from './combineVerdicts';
 
 const SYMBOL = 'BTCUSDT';
 const MAX_CANDLES = 500;
@@ -111,6 +114,8 @@ export default function App() {
   });
   const [pmData, setPmData] = useState<PolymarketData>(EMPTY_PM);
   const [mtfData, setMtfData] = useState<MTFRecord | null>(null);
+  const { rlState, rlEnabled, setRlEnabled } = useRLPrediction(mtfData, pmData, interval);
+  const [combinedVerdict, setCombinedVerdict] = useState<CombinedVerdict | null>(null);
 
   // DOM refs for chart containers.
   const priceRef = useRef<HTMLDivElement>(null);
@@ -339,6 +344,7 @@ export default function App() {
   // ─── Auto-Tracker for Winstreak + Signal History ─────────────
   const lastEntryWindowRef = useRef<number>(0); // tracks which window got ВХОД recorded
   const PM_WIN_THRESHOLD = 0.93; // 93¢ = trade worked
+  const PM_EARLY_EXIT_THRESHOLD = 0.25; // 25¢ = early exit (stop-loss)
   
   useEffect(() => {
     if (!state.verdict) return;
@@ -372,7 +378,7 @@ export default function App() {
       });
     }
 
-    // Проверка результата по PM цене (93¢ порог)
+    // Проверка результата по PM цене (93¢ порог WIN / 25¢ порог EARLY EXIT)
     if (tracker && tracker.windowStart === pmData.currentWindowTs) {
       const pmPrice = tracker.direction === 'UP' ? pmData.priceUp : pmData.priceDown;
       
@@ -385,6 +391,17 @@ export default function App() {
             : e
         ));
         logSignalResult(tracker.windowStart, 'win', state.verdict, pmData);
+        setTracker(null);
+      } else if (pmPrice > 0 && pmPrice <= PM_EARLY_EXIT_THRESHOLD) {
+        // Early exit: PM цена упала ≤ 25¢ — выход со стоп-лоссом
+        console.log(`[EarlyExit] PM price ${(pmPrice * 100).toFixed(1)}¢ ≤ ${PM_EARLY_EXIT_THRESHOLD * 100}¢ → LOSS (stop-loss)`);
+        setWinStreak(prev => [...prev.slice(-19), { result: '-', direction: tracker.direction }]);
+        setSignalHistory(prev => prev.map(e => 
+          e.windowTs === tracker.windowStart && e.result === 'pending'
+            ? { ...e, result: 'loss' as const, delta: pmPrice } 
+            : e
+        ));
+        logSignalResult(tracker.windowStart, 'loss', state.verdict, pmData);
         setTracker(null);
       }
     }
@@ -401,6 +418,15 @@ export default function App() {
       setTracker(null);
     }
   }, [state.verdict, pmData.currentWindowTs, pmData.priceUp, pmData.priceDown]);
+
+  // ─── RL combined verdict ─────────────────────
+  useEffect(() => {
+    if (rlState.prediction && state.verdict) {
+      setCombinedVerdict(combineVerdicts(rlState.prediction, state.verdict));
+    } else {
+      setCombinedVerdict(null);
+    }
+  }, [rlState.prediction, state.verdict]);
 
   // Recalculate verdict when MTF or PM data updates independently
   useEffect(() => {
@@ -516,6 +542,8 @@ export default function App() {
               <label><input type="checkbox" checked={showVWAP} onChange={e => setShowVWAP(e.target.checked)} /> <span>VWAP</span></label>
               <label><input type="checkbox" checked={showBB} onChange={e => setShowBB(e.target.checked)} /> <span>BB</span></label>
               <label><input type="checkbox" checked={showStoch} onChange={e => setShowStoch(e.target.checked)} /> <span>StochRSI</span></label>
+              <label><input type="checkbox" checked={rlEnabled} onChange={e => setRlEnabled(e.target.checked)} /> <span style={{ color: rlEnabled ? '#7C4DFF' : '#9E9E9E' }}>RL Agent</span></label>
+              <a href="#training" style={{ color: '#7C4DFF', fontSize: 12, marginLeft: 8, textDecoration: 'none' }}>Training</a>
             </div>
           <span className={`session-badge ${clocks.session.className}`}>
             {clocks.session.name} {clocks.session.emoji}
@@ -796,6 +824,41 @@ export default function App() {
                            <li key={i}>{c}</li>
                         ))}
                       </ul>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ─── RL Agent Verdict ─── */}
+            {rlEnabled && rlState.prediction && (
+              <div className="rl-verdict" style={{ marginTop: '12px', padding: '8px', background: '#1e222d', borderRadius: '8px', border: '1px solid #7C4DFF' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                  <span style={{ fontWeight: 'bold', color: '#7C4DFF', fontSize: '12px' }}>🤖 RL Agent</span>
+                  <span style={{ fontSize: '10px', color: '#787B86' }}>{rlState.prediction.modelVersion}</span>
+                </div>
+                <div style={{ padding: '6px', background: '#2a2e39', textAlign: 'center', borderRadius: '4px' }}>
+                  <div style={{ fontSize: '16px', fontWeight: 'bold', color: rlState.prediction.action === 1 ? '#26a69a' : rlState.prediction.action === 2 ? '#ef5350' : '#9e9e9e' }}>
+                    {rlState.prediction.actionName} ({Math.round(rlState.prediction.confidence * 100)}%)
+                  </div>
+                </div>
+                {rlState.error && <div style={{ color: '#EF5350', fontSize: '11px', marginTop: '4px' }}>{rlState.error}</div>}
+              </div>
+            )}
+
+            {/* ─── Combined Verdict (RL + SA) ─── */}
+            {combinedVerdict && rlEnabled && (
+              <div className="combined-verdict" style={{ marginTop: '8px', padding: '8px', background: '#1e222d', borderRadius: '8px', border: `1px solid ${combinedVerdict.agreed ? '#26A69A' : '#FF9800'}` }}>
+                <div style={{ fontWeight: 'bold', color: '#fff', fontSize: '12px', marginBottom: '6px' }}>
+                  🔀 Complement Mode {combinedVerdict.agreed ? '✅' : '⚠️'}
+                </div>
+                <div style={{ padding: '6px', background: '#2a2e39', textAlign: 'center', borderRadius: '4px' }}>
+                  <div style={{ fontSize: '16px', fontWeight: 'bold', color: combinedVerdict.action.includes('UP') ? '#26a69a' : combinedVerdict.action.includes('DOWN') ? '#ef5350' : '#ffeb3b' }}>
+                    {combinedVerdict.action.includes('ВХОД') ? `${combinedVerdict.action} (${Math.round(combinedVerdict.confidence * 100)}%)` : combinedVerdict.action}
+                  </div>
+                  {!combinedVerdict.agreed && (
+                    <div style={{ fontSize: '11px', color: '#FF9800', marginTop: '4px' }}>
+                      RL={rlState.prediction?.actionName || '?'} SA={state.verdict?.direction || '?'} → disagreement
                     </div>
                   )}
                 </div>
