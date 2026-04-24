@@ -1,7 +1,7 @@
 import type { BinanceKlineRaw, Candle, BinanceWSMessage } from './types';
 
 const REST_BASE = '/binance-fapi/fapi/v1';
-const WS_BASE = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/binance-ws/ws`;
+const WS_BASE = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/binance-ws/market/ws`;
 
 // ─── REST ─────────────────────────────────────
 

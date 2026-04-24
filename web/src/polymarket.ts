@@ -184,7 +184,13 @@ class WsManager {
   private onUpdate: (u: Partial<PriceUpdate>) => void;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private flushTimer: ReturnType<typeof setInterval> | null = null;
+  private watchdogTimer: ReturnType<typeof setTimeout> | null = null;
   private alive = true;
+
+  // Inactivity watchdog: if no WS message for 90s, force reconnect
+  // (Polymarket WS has a known "silent freeze" bug where connection stays OPEN
+  //  but stops delivering price_change events)
+  private static readonly WATCHDOG_MS = 90_000;
 
   // Buffered latest values — only flushed once per second
   private latestUp: { ask: number; bid: number } | null = null;
@@ -254,9 +260,11 @@ class WsManager {
 
     this.ws.onopen = () => {
       this.ws?.send(JSON.stringify({ type: 'market', assets_ids: this.assetIds }));
+      this.resetWatchdog();
     };
 
     this.ws.onmessage = (e) => {
+      this.resetWatchdog();
       try {
         const msg = JSON.parse(e.data);
         const pc = msg.price_changes;
@@ -289,8 +297,19 @@ class WsManager {
     this.reconnectTimer = setTimeout(() => this.connect(), 3_000);
   }
 
+  private resetWatchdog() {
+    if (this.watchdogTimer) clearTimeout(this.watchdogTimer);
+    this.watchdogTimer = setTimeout(() => {
+      if (!this.alive) return;
+      console.warn('[PM WS] Inactivity watchdog triggered — no data for 90s, reconnecting…');
+      this.closeWs();
+      this.connect();
+    }, WsManager.WATCHDOG_MS);
+  }
+
   private closeWs() {
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+    if (this.watchdogTimer) { clearTimeout(this.watchdogTimer); this.watchdogTimer = null; }
     if (this.ws) { this.ws.onclose = null; this.ws.onerror = null; this.ws.close(); this.ws = null; }
   }
 
